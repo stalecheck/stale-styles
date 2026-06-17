@@ -29,7 +29,7 @@
     "@vitest/coverage-v8": "4.1.7",
     "commit-and-tag-version": "12.7.3",
     "oxfmt": "0.53.0",
-    "oxlint": "1.68.0",
+    "oxlint": "1.69.0",
     "oxlint-tsgolint": "0.23.0",
     "tsup": "8.5.1",
     "typescript": "6.0.3",
