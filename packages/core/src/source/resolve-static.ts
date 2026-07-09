@@ -21,8 +21,25 @@ export function createStaticResolver(
       return;
     }
 
+    if (node.type === "TSInterfaceDeclaration") {
+      collectInterfaceDeclaration(node, objectConstants, typeAliases, objectTypeAliases);
+      return;
+    }
+
     if (node.type === "TSEnumDeclaration") {
       collectEnumDeclaration(node, ancestors, objectConstants);
+      return;
+    }
+
+    if (node.type === "CallExpression") {
+      collectForwardRefPropsBinding(
+        node,
+        ancestors,
+        constants,
+        objectConstants,
+        typeAliases,
+        objectTypeAliases
+      );
       return;
     }
 
@@ -68,7 +85,8 @@ function collectTypeAlias(
   const resolvedObject = resolveObjectTypeAnnotation(
     node.typeAnnotation,
     objectConstants,
-    typeAliases
+    typeAliases,
+    objectTypeAliases
   );
 
   if (resolvedObject) {
@@ -81,6 +99,58 @@ function collectTypeAlias(
   if (resolved) {
     typeAliases.set(identifier, resolved);
   }
+}
+
+function collectInterfaceDeclaration(
+  node: AstNode,
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  typeAliases: Map<string, string[]>,
+  objectTypeAliases: Map<string, Map<string, string[]>>
+): void {
+  const identifier = getIdentifierName(node.id);
+  const resolved = resolveInterfaceDeclaration(
+    node,
+    objectConstants,
+    typeAliases,
+    objectTypeAliases
+  );
+
+  if (identifier && resolved) {
+    objectTypeAliases.set(identifier, resolved);
+  }
+}
+
+function resolveInterfaceDeclaration(
+  node: AstNode,
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  typeAliases: Map<string, string[]>,
+  objectTypeAliases: Map<string, Map<string, string[]>>
+): Map<string, string[]> | undefined {
+  const properties = new Map<string, string[]>();
+  const heritageEntries = Array.isArray(node.extends) ? node.extends : [];
+
+  for (const heritage of heritageEntries) {
+    if (!isAstNode(heritage)) {
+      continue;
+    }
+
+    const baseName = getIdentifierName(heritage.expression);
+    const baseProperties = baseName ? objectTypeAliases.get(baseName) : undefined;
+
+    if (baseProperties) {
+      mergeObjectTypeProperties(properties, baseProperties);
+    }
+  }
+
+  const ownProperties = isAstNode(node.body)
+    ? resolveObjectTypeMembers(node.body.body, objectConstants, typeAliases)
+    : undefined;
+
+  if (ownProperties) {
+    mergeObjectTypeProperties(properties, ownProperties);
+  }
+
+  return properties.size > 0 ? properties : undefined;
 }
 
 function collectEnumDeclaration(
@@ -153,6 +223,42 @@ function collectVariableDeclarator(
   }
 }
 
+function collectForwardRefPropsBinding(
+  node: AstNode,
+  ancestors: AstNode[],
+  constants: ScopedBinding<string[] | undefined>[],
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  typeAliases: Map<string, string[]>,
+  objectTypeAliases: Map<string, Map<string, string[]>>
+): void {
+  if (!isForwardRefCall(node)) {
+    return;
+  }
+
+  const propsType = getForwardRefPropsType(node);
+  const renderFunction = Array.isArray(node.arguments) ? node.arguments[0] : undefined;
+
+  if (!isAstNode(propsType) || !isAstNode(renderFunction) || !isFunctionNode(renderFunction)) {
+    return;
+  }
+
+  const propsParam = Array.isArray(renderFunction.params) ? renderFunction.params[0] : undefined;
+
+  if (!isAstNode(propsParam) || propsParam.type !== "ObjectPattern") {
+    return;
+  }
+
+  collectObjectPatternTypedBindings(
+    propsParam,
+    propsType,
+    [...ancestors, node, renderFunction],
+    constants,
+    objectConstants,
+    typeAliases,
+    objectTypeAliases
+  );
+}
+
 function collectTypedBinding(
   node: AstNode,
   ancestors: AstNode[],
@@ -173,8 +279,28 @@ function collectTypedBinding(
     return;
   }
 
-  const objectTypeProperties = getObjectTypeProperties(
+  collectObjectPatternTypedBindings(
+    node,
     node.typeAnnotation,
+    ancestors,
+    constants,
+    objectConstants,
+    typeAliases,
+    objectTypeAliases
+  );
+}
+
+function collectObjectPatternTypedBindings(
+  node: AstNode,
+  annotation: AstNode,
+  ancestors: AstNode[],
+  constants: ScopedBinding<string[] | undefined>[],
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  typeAliases: Map<string, string[]>,
+  objectTypeAliases: Map<string, Map<string, string[]>>
+): void {
+  const objectTypeProperties = getObjectTypeProperties(
+    annotation,
     objectConstants,
     typeAliases,
     objectTypeAliases
@@ -204,12 +330,42 @@ function collectTypedBinding(
   }
 }
 
+function isForwardRefCall(node: AstNode): boolean {
+  const callee = node.callee;
+
+  if (getIdentifierName(callee) === "forwardRef") {
+    return true;
+  }
+
+  if (!isAstNode(callee) || callee.type !== "MemberExpression") {
+    return false;
+  }
+
+  return getStaticPropertyName(callee.property) === "forwardRef";
+}
+
+function getForwardRefPropsType(node: AstNode): unknown {
+  const typeArguments = node.typeArguments;
+
+  return isAstNode(typeArguments) && Array.isArray(typeArguments.params)
+    ? typeArguments.params[1]
+    : undefined;
+}
+
+function isFunctionNode(node: AstNode): boolean {
+  return (
+    node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression"
+  );
+}
+
 function resolveExpression(
   expression: AstNode,
   constants: ScopedBinding<string[] | undefined>[],
   objectConstants: ScopedBinding<Map<string, string[]>>[]
 ): string[] | undefined {
-  const literal = getStringLiteralValue(expression);
+  const literal = getStaticPrimitiveValue(expression);
 
   if (literal !== undefined) {
     return [literal];
@@ -274,7 +430,11 @@ function getObjectTypeProperties(
   }
 
   if (typeNode.type === "TSTypeLiteral") {
-    return resolveObjectTypeAnnotation(typeNode, objectConstants, typeAliases);
+    return resolveObjectTypeAnnotation(typeNode, objectConstants, typeAliases, objectTypeAliases);
+  }
+
+  if (typeNode.type === "TSIntersectionType") {
+    return resolveObjectTypeAnnotation(typeNode, objectConstants, typeAliases, objectTypeAliases);
   }
 
   if (typeNode.type === "TSTypeReference") {
@@ -288,17 +448,73 @@ function getObjectTypeProperties(
 function resolveObjectTypeAnnotation(
   annotation: AstNode,
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>
+  typeAliases: Map<string, string[]>,
+  objectTypeAliases: Map<string, Map<string, string[]>>
 ): Map<string, string[]> | undefined {
   const typeNode = getTypeAnnotationBody(annotation);
 
-  if (!typeNode || typeNode.type !== "TSTypeLiteral" || !Array.isArray(typeNode.members)) {
+  if (!typeNode) {
+    return undefined;
+  }
+
+  if (typeNode.type === "TSTypeLiteral") {
+    return resolveObjectTypeMembers(typeNode.members, objectConstants, typeAliases);
+  }
+
+  if (typeNode.type === "TSTypeReference") {
+    const typeName = getIdentifierName(typeNode.typeName);
+    return typeName ? objectTypeAliases.get(typeName) : undefined;
+  }
+
+  if (typeNode.type !== "TSIntersectionType" || !Array.isArray(typeNode.types)) {
     return undefined;
   }
 
   const properties = new Map<string, string[]>();
 
-  for (const member of typeNode.members) {
+  for (const childType of typeNode.types) {
+    if (!isAstNode(childType)) {
+      continue;
+    }
+
+    const childProperties = resolveObjectTypeAnnotation(
+      childType,
+      objectConstants,
+      typeAliases,
+      objectTypeAliases
+    );
+
+    if (!childProperties) {
+      continue;
+    }
+
+    mergeObjectTypeProperties(properties, childProperties);
+  }
+
+  return properties.size > 0 ? properties : undefined;
+}
+
+function mergeObjectTypeProperties(
+  target: Map<string, string[]>,
+  source: Map<string, string[]>
+): void {
+  for (const [propertyName, propertyValues] of source) {
+    target.set(propertyName, propertyValues);
+  }
+}
+
+function resolveObjectTypeMembers(
+  members: unknown,
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  typeAliases: Map<string, string[]>
+): Map<string, string[]> | undefined {
+  if (!Array.isArray(members)) {
+    return undefined;
+  }
+
+  const properties = new Map<string, string[]>();
+
+  for (const member of members) {
     if (!isAstNode(member) || member.type !== "TSPropertySignature") {
       return undefined;
     }
@@ -433,7 +649,7 @@ function resolveTypeAnnotation(
   }
 
   if (typeNode.type === "TSLiteralType") {
-    const value = getStringLiteralValue(typeNode.literal);
+    const value = getStaticPrimitiveValue(typeNode.literal);
     return value === undefined ? undefined : [value];
   }
 
@@ -528,6 +744,22 @@ function getTypeAnnotationBody(annotation: AstNode): AstNode | undefined {
   }
 
   return annotation;
+}
+
+function getStaticPrimitiveValue(node: unknown): string | undefined {
+  if (!isAstNode(node) || node.type !== "Literal") {
+    return undefined;
+  }
+
+  if (typeof node.value === "string") {
+    return node.value;
+  }
+
+  if (typeof node.value === "number" && Number.isFinite(node.value)) {
+    return String(node.value);
+  }
+
+  return undefined;
 }
 
 function createScopedBinding<T>(

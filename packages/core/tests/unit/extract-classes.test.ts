@@ -144,6 +144,43 @@ describe("CSS class extraction", () => {
     expect([...result.classes].sort()).toEqual(["active", "button"]);
   });
 
+  it("keeps keyframe names out of CSS Module classes", () => {
+    const result = extractCssClasses(`
+      .button {
+        animation: fade-in 200ms ease;
+      }
+
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+        }
+
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes unused-spin {
+        from {
+          transform: rotate(0deg);
+        }
+
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    `);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+
+    expect([...result.classes].sort()).toEqual(["button"]);
+    expect([...result.importableClasses.keys()].sort()).toEqual(["button"]);
+  });
+
   it("keeps standalone empty selectors as classes and marks them as empty", () => {
     const source = `
       .marker {

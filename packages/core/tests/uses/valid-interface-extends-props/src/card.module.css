@@ -1,0 +1,23 @@
+.compact {
+  padding: 0.5rem;
+}
+
+.wide {
+  padding: 1rem;
+}
+
+.neutral {
+  color: gray;
+}
+
+.accent {
+  color: blue;
+}
+
+.solid {
+  border-style: solid;
+}
+
+.outline {
+  border-style: dashed;
+}
