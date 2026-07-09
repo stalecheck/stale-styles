@@ -87,7 +87,7 @@ function getKeyframeNames(source: string, filename: string): Set<string> {
 }
 
 function getKeyframesName(name: KeyframesName): string {
-  return String(name.value);
+  return name.value;
 }
 
 function getComposedClasses(exports: CSSModuleExports): Map<string, Set<string>> {
