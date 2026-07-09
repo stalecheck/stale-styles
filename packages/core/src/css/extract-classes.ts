@@ -1,5 +1,11 @@
 import { Buffer } from "node:buffer";
-import { Features, transform, type CSSModuleExports, type Selector } from "lightningcss";
+import {
+  Features,
+  transform,
+  type CSSModuleExports,
+  type KeyframesName,
+  type Selector
+} from "lightningcss";
 import { getLocalClassNames } from "../config";
 import { getLocation } from "../locations";
 import type { LocalsConvention, SourceLocation } from "../types";
@@ -28,7 +34,12 @@ export function extractCssClasses(
       include: Features.Nesting
     });
     const exports = transformed.exports ?? {};
-    const classes = new Set(Object.keys(exports).sort());
+    const keyframeNames = getKeyframeNames(source, filename);
+    const classes = new Set(
+      Object.keys(exports)
+        .filter((className) => !keyframeNames.has(className))
+        .sort()
+    );
     const emptyClasses = getEmptyStandaloneClasses(source, filename);
     const locations = getClassLocations(source);
 
@@ -54,6 +65,29 @@ export function extractCssClasses(
       column: loc.column
     };
   }
+}
+
+function getKeyframeNames(source: string, filename: string): Set<string> {
+  const keyframeNames = new Set<string>();
+
+  transform({
+    filename,
+    code: Buffer.from(source),
+    include: Features.Nesting,
+    visitor: {
+      Rule: {
+        keyframes(rule) {
+          keyframeNames.add(getKeyframesName(rule.value.name));
+        }
+      }
+    }
+  });
+
+  return keyframeNames;
+}
+
+function getKeyframesName(name: KeyframesName): string {
+  return name.value;
 }
 
 function getComposedClasses(exports: CSSModuleExports): Map<string, Set<string>> {

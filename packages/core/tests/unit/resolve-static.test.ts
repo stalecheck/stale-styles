@@ -25,6 +25,20 @@ describe("createStaticResolver", () => {
     ]);
   });
 
+  it("expands template literals with typed numeric union expressions", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./button.module.css";
+
+      type Step = 0 | 1 | 2;
+
+      export function Button({ step }: { step: Step }) {
+        return styles[\`item\${step}\`];
+      }
+    `);
+
+    expect(resolved).toEqual([["item0", "item1", "item2"]]);
+  });
+
   it("resolves destructured prop aliases with defaults through type aliases", () => {
     const resolved = resolveComputedStyleProperties(`
       import styles from "./button.module.css";
@@ -37,6 +51,137 @@ describe("createStaticResolver", () => {
     `);
 
     expect(resolved).toEqual([["primary", "secondary"]]);
+  });
+
+  it("resolves destructured props through interfaces with type alias properties", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import clsx from "clsx";
+      import styles from "./button.module.css";
+
+      type Position = "top" | "bottom";
+
+      interface Props {
+        position: Position;
+      }
+
+      export function Button({ position }: Props) {
+        return clsx(styles[position]);
+      }
+    `);
+
+    expect(resolved).toEqual([["top", "bottom"]]);
+  });
+
+  it("resolves forwardRef destructured props through intersection type aliases", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import { forwardRef, type HTMLAttributes } from "react";
+      import styles from "./separator.module.css";
+
+      type Props = HTMLAttributes<HTMLHRElement> & {
+        variant?: "solid" | "dotted";
+      };
+
+      export const Separator = forwardRef<HTMLHRElement, Props>(
+        ({ variant = "solid", ...props }, ref) => {
+          return <hr ref={ref} className={styles[variant]} {...props} />;
+        }
+      );
+
+      const variant = "outside";
+      styles[variant];
+    `);
+
+    expect(resolved).toEqual([["solid", "dotted"], ["outside"]]);
+  });
+
+  it("resolves known properties from mixed intersection type aliases", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import { type HTMLAttributes } from "react";
+      import styles from "./badge.module.css";
+
+      type SizeProps = {
+        size: "sm" | "lg";
+      };
+
+      type Props = HTMLAttributes<HTMLSpanElement> &
+        SizeProps & {
+          tone: "info" | "danger";
+        } & {
+          align: "start" | "end";
+        };
+
+      export function Badge({ size, tone, align }: Props) {
+        return [
+          styles[size],
+          styles[tone],
+          styles[\`align-\${align}\`],
+        ];
+      }
+    `);
+
+    expect(resolved).toEqual([
+      ["sm", "lg"],
+      ["info", "danger"],
+      ["align-start", "align-end"]
+    ]);
+  });
+
+  it("resolves interface inheritance from known base interfaces", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./card.module.css";
+
+      interface SizingProps {
+        size: "compact" | "wide";
+      }
+
+      interface ToneProps {
+        tone: "neutral" | "accent";
+      }
+
+      interface Props extends SizingProps, ToneProps {
+        variant: "solid" | "outline";
+      }
+
+      export function Card({ size, tone, variant }: Props) {
+        return [
+          styles[size],
+          styles[tone],
+          styles[variant],
+        ];
+      }
+    `);
+
+    expect(resolved).toEqual([
+      ["compact", "wide"],
+      ["neutral", "accent"],
+      ["solid", "outline"]
+    ]);
+  });
+
+  it("resolves interfaces extending object type aliases", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./card.module.css";
+
+      type SizingProps = {
+        size: "compact" | "wide";
+      };
+
+      interface Props extends SizingProps {
+        variant: "solid" | "outline";
+      }
+
+      export function Card({ size, variant }: Props) {
+        return [
+          styles[size],
+          styles[variant],
+        ];
+      }
+    `);
+
+    expect(resolved).toEqual([
+      ["compact", "wide"],
+      ["solid", "outline"]
+    ]);
   });
 
   it("resolves object literal maps and string enum members", () => {

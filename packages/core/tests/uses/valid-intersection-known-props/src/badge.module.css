@@ -1,0 +1,23 @@
+.sm {
+  font-size: 0.875rem;
+}
+
+.lg {
+  font-size: 1.125rem;
+}
+
+.info {
+  color: blue;
+}
+
+.danger {
+  color: red;
+}
+
+.align-start {
+  text-align: start;
+}
+
+.align-end {
+  text-align: end;
+}
