@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [1.0.1](https://github.com/stalecheck/stale-styles/compare/v1.0.0...v1.0.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* keyframes support ([84bea56](https://github.com/stalecheck/stale-styles/commit/84bea56e765dd8a5f126c80453e907ed9d43faaf))
+
 ## [1.0.0](https://github.com/IvanPenyaHuguet/css-modules-class-checker/compare/v1.0.0-beta.4...v1.0.0) (2026-06-07)
 
 
