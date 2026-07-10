@@ -4,7 +4,7 @@
  * This is the public programmatic API for running the same project-level check
  * exposed by the CLI.
  */
-export { checkCssModules } from "@stale-styles/core";
+export { checkCssModules, InvalidOptionsError } from "@stale-styles/core";
 export type {
   CheckOptions,
   CheckResult,

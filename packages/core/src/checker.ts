@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { mergeRules } from "./config";
+import { mergeRules, validateCheckOptions, validateCheckSourceFileOptions } from "./config";
 import { extractCssClasses } from "./css/extract-classes";
 import { findSourceFiles } from "./files";
 import { getLocation } from "./locations";
@@ -42,6 +42,7 @@ type SourceAnalysisOptions = Pick<
  * statically.
  */
 export async function checkCssModules(options: CheckOptions = {}): Promise<CheckResult> {
+  validateCheckOptions(options);
   const target = path.resolve(options.target ?? process.cwd());
   const rules = mergeRules(options.rules);
   const sourceFiles = await findSourceFiles(target, options.ignore);
@@ -71,6 +72,7 @@ export async function checkCssModules(options: CheckOptions = {}): Promise<Check
 export async function checkCssModuleSourceFile(
   options: CheckSourceFileOptions
 ): Promise<CheckResult> {
+  validateCheckSourceFileOptions(options);
   const rules = mergeRules(options.rules);
   const diagnostics: Diagnostic[] = [];
   const cssModules = new Map<string, CssModuleRecord>();
@@ -89,6 +91,7 @@ export async function checkCssModuleSourceFile(
 }
 
 export function checkCssModuleSourceFileSync(options: CheckSourceFileOptions): CheckResult {
+  validateCheckSourceFileOptions(options);
   const rules = mergeRules(options.rules);
   const diagnostics: Diagnostic[] = [];
   const cssModules = new Map<string, CssModuleRecord>();
