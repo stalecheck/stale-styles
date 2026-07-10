@@ -1,6 +1,6 @@
 {
   "name": "@stale-styles/cli",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Executable CLI for @stale-styles/css-modules.",
   "license": "MIT",
   "repository": {
