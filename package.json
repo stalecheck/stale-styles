@@ -1,6 +1,6 @@
 {
   "name": "@stale-styles/monorepo",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Monorepo for styles that have been stale, checking tools packages.",
   "license": "MIT",

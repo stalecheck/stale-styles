@@ -1,6 +1,6 @@
 {
   "name": "@stale-styles/css-modules",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Importable CSS Modules class checker application API.",
   "license": "MIT",
   "repository": {
