@@ -61,7 +61,9 @@ function normalizeResult(
         code: error.code,
         severity: error.severity,
         filePath: toRelative(target, error.filePath),
-        ...(error.cssModulePath ? { cssModulePath: toRelative(target, error.cssModulePath) } : {}),
+        ...(expectedError?.cssModulePath !== undefined && error.cssModulePath
+          ? { cssModulePath: toRelative(target, error.cssModulePath) }
+          : {}),
         ...(error.className ? { className: error.className } : {}),
         ...(expectedError?.line !== undefined ? { line: error.line } : {}),
         ...(expectedError?.column !== undefined ? { column: error.column } : {})

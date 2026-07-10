@@ -13,7 +13,7 @@ describe("renderTextReport", () => {
     };
 
     expect(renderTextReport(result, process.cwd())).toBe(
-      "CSS Modules check passed. 2 files checked, 1 CSS Modules checked."
+      "CSS Modules check passed. 2 source files analyzed, 1 CSS Modules checked."
     );
   });
 
@@ -38,6 +38,9 @@ describe("renderTextReport", () => {
 
     expect(renderTextReport(result, process.cwd())).toContain(
       "error missing-css-module-class (missing) at 3:14"
+    );
+    expect(renderTextReport(result, process.cwd())).toContain(
+      "1 source files analyzed, 1 CSS Modules checked."
     );
   });
 });

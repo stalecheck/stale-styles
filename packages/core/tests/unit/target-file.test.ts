@@ -40,7 +40,7 @@ describe("target files", () => {
     });
   });
 
-  it("skips a single file target that is not a source file", async () => {
+  it("fails when a single file target is not a supported source file", async () => {
     const targetRoot = await mkdtemp(path.join(os.tmpdir(), "stale-styles-target-file-"));
     const textFile = path.join(targetRoot, "notes.txt");
 
@@ -49,14 +49,14 @@ describe("target files", () => {
     const result = await checkCssModules({ target: textFile });
 
     expect(result).toMatchObject({
-      status: "SUCCESS",
+      status: "FAIL",
       filesChecked: 0,
       cssModulesChecked: 0,
-      errors: []
+      errors: [expect.objectContaining({ code: "no-source-files", severity: "error" })]
     });
   });
 
-  it("skips a single source file target when it matches ignore options", async () => {
+  it("fails when a single source file target matches ignore options", async () => {
     const targetRoot = await mkdtemp(path.join(os.tmpdir(), "stale-styles-target-file-"));
     const sourceFile = path.join(targetRoot, "ignored.tsx");
 
@@ -65,9 +65,24 @@ describe("target files", () => {
     const result = await checkCssModules({ target: sourceFile, ignore: ["ignored.tsx"] });
 
     expect(result).toMatchObject({
-      status: "SUCCESS",
+      status: "FAIL",
       filesChecked: 0,
       cssModulesChecked: 0,
+      errors: [expect.objectContaining({ code: "no-source-files", severity: "error" })]
+    });
+  });
+
+  it.each(["mjs", "mts"])("checks %s source files", async (extension) => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), "stale-styles-target-file-"));
+    const sourceFile = path.join(targetRoot, `button.${extension}`);
+
+    await writeFile(sourceFile, 'import styles from "./button.module.css"; styles.root;\n');
+    await writeFile(path.join(targetRoot, "button.module.css"), ".root { color: red; }\n");
+
+    await expect(checkCssModules({ target: sourceFile })).resolves.toMatchObject({
+      status: "SUCCESS",
+      filesChecked: 1,
+      cssModulesChecked: 1,
       errors: []
     });
   });

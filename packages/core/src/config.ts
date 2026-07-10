@@ -17,7 +17,8 @@ export const defaultRules: Record<DiagnosticCode, RuleLevel> = {
   "unresolved-dynamic-class": "error",
   "css-module-file-not-found": "error",
   "css-parse-error": "error",
-  "source-parse-error": "error"
+  "source-parse-error": "error",
+  "no-source-files": "error"
 };
 
 export function mergeRules(rules: RulesConfig | undefined): Record<DiagnosticCode, RuleLevel> {

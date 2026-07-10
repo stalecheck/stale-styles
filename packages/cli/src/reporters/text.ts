@@ -2,8 +2,10 @@ import path from "node:path";
 import type { CheckResult, Diagnostic } from "@stale-styles/css-modules";
 
 export function renderTextReport(result: CheckResult, root = process.cwd()): string {
+  const summary = `${result.filesChecked} source files analyzed, ${result.cssModulesChecked} CSS Modules checked.`;
+
   if (result.errors.length === 0) {
-    return `CSS Modules check passed. ${result.filesChecked} files checked, ${result.cssModulesChecked} CSS Modules checked.`;
+    return `CSS Modules check passed. ${summary}`;
   }
 
   const lines: string[] = [];
@@ -27,6 +29,8 @@ export function renderTextReport(result: CheckResult, root = process.cwd()): str
     }
   }
 
+  lines.push("");
+  lines.push(summary);
   return lines.join("\n");
 }
 

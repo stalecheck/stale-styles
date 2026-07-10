@@ -13,7 +13,8 @@ export type DiagnosticCode =
   | "unresolved-dynamic-class"
   | "css-module-file-not-found"
   | "css-parse-error"
-  | "source-parse-error";
+  | "source-parse-error"
+  | "no-source-files";
 
 /** A single issue found while checking source files and CSS Modules. */
 export type Diagnostic = {

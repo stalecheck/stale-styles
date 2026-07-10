@@ -174,6 +174,22 @@ describe("class usage extraction", () => {
     ]);
   });
 
+  it("only descends into calls to imported class composers", () => {
+    const source = `
+      import { clsx as cx } from "clsx";
+      import styles from "./button.module.css";
+
+      const prefix = (value: string) => \`x-\${value}\`;
+
+      <button className={prefix("root")} />;
+      <button className={cx("safe")} data-safe={styles.safe} />;
+    `;
+    const program = parseProgram(source);
+    const usages = findRawClassNameUsages(source, program);
+
+    expect(usages.map((usage) => usage.className)).toEqual(["safe"]);
+  });
+
   it("finds raw class strings in spread and tagged template composition", () => {
     const source = `
       import clsx from "clsx";

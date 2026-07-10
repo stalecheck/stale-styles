@@ -285,6 +285,7 @@ function bindingContainsName(binding: unknown, name: string): boolean {
 
 export function findRawClassNameUsages(source: string, program: AstNode): RawClassUsage[] {
   const usages: RawClassUsage[] = [];
+  const classComposerLocalNames = findClassComposerLocalNames(program);
 
   walkAst(program, (node) => {
     if (!isClassAttribute(node)) {
@@ -312,7 +313,8 @@ export function findRawClassNameUsages(source: string, program: AstNode): RawCla
       usages,
       source,
       value.expression,
-      value.start ?? node.start ?? 0
+      value.start ?? node.start ?? 0,
+      classComposerLocalNames
     );
   });
 
@@ -326,6 +328,60 @@ function isClassAttribute(node: AstNode): node is AstNode & { value: unknown } {
     node.name.type === "JSXIdentifier" &&
     (node.name.name === "className" || node.name.name === "class")
   );
+}
+
+function findClassComposerLocalNames(program: AstNode): Set<string> {
+  const classComposerLocalNames = new Set<string>();
+  const body = Array.isArray(program.body) ? program.body : [];
+
+  for (const statement of body) {
+    if (!isAstNode(statement) || statement.type !== "ImportDeclaration") {
+      continue;
+    }
+
+    const importPath = getStringLiteralValue(statement.source);
+
+    if (importPath !== "clsx" && importPath !== "classnames") {
+      continue;
+    }
+
+    const specifiers = Array.isArray(statement.specifiers) ? statement.specifiers : [];
+
+    for (const specifier of specifiers) {
+      if (!isAstNode(specifier)) {
+        continue;
+      }
+
+      if (specifier.type === "ImportDefaultSpecifier") {
+        const localName = getIdentifierName(specifier.local);
+
+        if (localName) {
+          classComposerLocalNames.add(localName);
+        }
+        continue;
+      }
+
+      if (specifier.type !== "ImportSpecifier") {
+        continue;
+      }
+
+      const importedName = getIdentifierName(specifier.imported);
+      const localName = getIdentifierName(specifier.local);
+
+      if (
+        localName &&
+        (importedName === "clsx" || importedName === "classNames" || importedName === "classnames")
+      ) {
+        classComposerLocalNames.add(localName);
+      }
+    }
+  }
+
+  return classComposerLocalNames;
+}
+
+function isClassComposerCall(node: AstNode, classComposerLocalNames: Set<string>): boolean {
+  return classComposerLocalNames.has(getIdentifierName(node.callee) ?? "");
 }
 
 function getStaticClassObjectKey(node: AstNode): string | undefined {
@@ -346,7 +402,8 @@ function collectRawClassExpressionUsages(
   usages: RawClassUsage[],
   source: string,
   node: AstNode,
-  fallbackIndex: number
+  fallbackIndex: number,
+  classComposerLocalNames: Set<string>
 ): void {
   const stringValue = getStringLiteralValue(node);
 
@@ -360,36 +417,66 @@ function collectRawClassExpressionUsages(
   }
 
   if (node.type === "TemplateLiteral") {
-    collectTemplateLiteralRawClassUsages(usages, source, node, fallbackIndex);
+    collectTemplateLiteralRawClassUsages(
+      usages,
+      source,
+      node,
+      fallbackIndex,
+      classComposerLocalNames
+    );
     return;
   }
 
   if (node.type === "TaggedTemplateExpression") {
-    collectChildRawClassUsages(usages, source, node.quasi, fallbackIndex);
+    collectChildRawClassUsages(usages, source, node.quasi, fallbackIndex, classComposerLocalNames);
     return;
   }
 
   if (node.type === "SpreadElement") {
-    collectChildRawClassUsages(usages, source, node.argument, fallbackIndex);
+    collectChildRawClassUsages(
+      usages,
+      source,
+      node.argument,
+      fallbackIndex,
+      classComposerLocalNames
+    );
     return;
   }
 
   if (node.type === "BinaryExpression") {
     if (node.operator === "+") {
-      collectChildRawClassUsages(usages, source, node.left, fallbackIndex);
-      collectChildRawClassUsages(usages, source, node.right, fallbackIndex);
+      collectChildRawClassUsages(usages, source, node.left, fallbackIndex, classComposerLocalNames);
+      collectChildRawClassUsages(
+        usages,
+        source,
+        node.right,
+        fallbackIndex,
+        classComposerLocalNames
+      );
     }
     return;
   }
 
   if (node.type === "LogicalExpression") {
-    collectChildRawClassUsages(usages, source, node.right, fallbackIndex);
+    collectChildRawClassUsages(usages, source, node.right, fallbackIndex, classComposerLocalNames);
     return;
   }
 
   if (node.type === "ConditionalExpression") {
-    collectChildRawClassUsages(usages, source, node.consequent, fallbackIndex);
-    collectChildRawClassUsages(usages, source, node.alternate, fallbackIndex);
+    collectChildRawClassUsages(
+      usages,
+      source,
+      node.consequent,
+      fallbackIndex,
+      classComposerLocalNames
+    );
+    collectChildRawClassUsages(
+      usages,
+      source,
+      node.alternate,
+      fallbackIndex,
+      classComposerLocalNames
+    );
     return;
   }
 
@@ -397,27 +484,37 @@ function collectRawClassExpressionUsages(
     const elements = Array.isArray(node.elements) ? node.elements : [];
 
     for (const element of elements) {
-      collectChildRawClassUsages(usages, source, element, fallbackIndex);
+      collectChildRawClassUsages(usages, source, element, fallbackIndex, classComposerLocalNames);
     }
     return;
   }
 
   if (node.type === "ObjectExpression") {
-    collectObjectRawClassUsages(usages, source, node, fallbackIndex);
+    collectObjectRawClassUsages(usages, source, node, fallbackIndex, classComposerLocalNames);
     return;
   }
 
   if (node.type === "CallExpression") {
+    if (!isClassComposerCall(node, classComposerLocalNames)) {
+      return;
+    }
+
     const args = Array.isArray(node.arguments) ? node.arguments : [];
 
     for (const arg of args) {
-      collectChildRawClassUsages(usages, source, arg, fallbackIndex);
+      collectChildRawClassUsages(usages, source, arg, fallbackIndex, classComposerLocalNames);
     }
     return;
   }
 
   if (isExpressionWrapper(node)) {
-    collectChildRawClassUsages(usages, source, node.expression, fallbackIndex);
+    collectChildRawClassUsages(
+      usages,
+      source,
+      node.expression,
+      fallbackIndex,
+      classComposerLocalNames
+    );
     return;
   }
 
@@ -425,7 +522,13 @@ function collectRawClassExpressionUsages(
     const expressions = Array.isArray(node.expressions) ? node.expressions : [];
     const lastExpression = expressions.at(-1);
 
-    collectChildRawClassUsages(usages, source, lastExpression, fallbackIndex);
+    collectChildRawClassUsages(
+      usages,
+      source,
+      lastExpression,
+      fallbackIndex,
+      classComposerLocalNames
+    );
   }
 }
 
@@ -433,20 +536,22 @@ function collectChildRawClassUsages(
   usages: RawClassUsage[],
   source: string,
   node: unknown,
-  fallbackIndex: number
+  fallbackIndex: number,
+  classComposerLocalNames: Set<string>
 ): void {
   if (!isAstNode(node)) {
     return;
   }
 
-  collectRawClassExpressionUsages(usages, source, node, fallbackIndex);
+  collectRawClassExpressionUsages(usages, source, node, fallbackIndex, classComposerLocalNames);
 }
 
 function collectTemplateLiteralRawClassUsages(
   usages: RawClassUsage[],
   source: string,
   node: AstNode,
-  fallbackIndex: number
+  fallbackIndex: number,
+  classComposerLocalNames: Set<string>
 ): void {
   const templateValue = getStaticTemplateValue(node);
 
@@ -467,7 +572,7 @@ function collectTemplateLiteralRawClassUsages(
   }
 
   for (const expression of expressions) {
-    collectChildRawClassUsages(usages, source, expression, fallbackIndex);
+    collectChildRawClassUsages(usages, source, expression, fallbackIndex, classComposerLocalNames);
   }
 }
 
@@ -475,7 +580,8 @@ function collectObjectRawClassUsages(
   usages: RawClassUsage[],
   source: string,
   node: AstNode,
-  fallbackIndex: number
+  fallbackIndex: number,
+  classComposerLocalNames: Set<string>
 ): void {
   const properties = Array.isArray(node.properties) ? node.properties : [];
 
@@ -485,7 +591,13 @@ function collectObjectRawClassUsages(
     }
 
     if (property.type === "SpreadElement") {
-      collectChildRawClassUsages(usages, source, property.argument, fallbackIndex);
+      collectChildRawClassUsages(
+        usages,
+        source,
+        property.argument,
+        fallbackIndex,
+        classComposerLocalNames
+      );
       continue;
     }
 
@@ -494,7 +606,13 @@ function collectObjectRawClassUsages(
     }
 
     if (property.computed === true) {
-      collectChildRawClassUsages(usages, source, property.key, fallbackIndex);
+      collectChildRawClassUsages(
+        usages,
+        source,
+        property.key,
+        fallbackIndex,
+        classComposerLocalNames
+      );
       continue;
     }
 

@@ -106,4 +106,48 @@ describe("checkCssModuleSourceFileSync", () => {
       errors: []
     });
   });
+
+  it("reports ambiguous raw classes for every candidate without marking them as used", () => {
+    const targetRoot = mkdtempSync(path.join(os.tmpdir(), "stale-styles-sync-"));
+    const filePath = path.join(targetRoot, "button.tsx");
+    const firstCssPath = path.join(targetRoot, "first.module.css");
+    const secondCssPath = path.join(targetRoot, "second.module.css");
+
+    writeFileSync(firstCssPath, ".root { color: red; }\n", "utf8");
+    writeFileSync(secondCssPath, ".root { color: blue; }\n", "utf8");
+
+    const result = checkCssModuleSourceFileSync({
+      filePath,
+      source: [
+        'import first from "./first.module.css";',
+        'import second from "./second.module.css";',
+        'export const Button = () => <button className="root" />;'
+      ].join("\n")
+    });
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "raw-css-module-class",
+          cssModulePath: firstCssPath,
+          className: "root"
+        }),
+        expect.objectContaining({
+          code: "raw-css-module-class",
+          cssModulePath: secondCssPath,
+          className: "root"
+        }),
+        expect.objectContaining({
+          code: "unused-css-module-class",
+          cssModulePath: firstCssPath,
+          className: "root"
+        }),
+        expect.objectContaining({
+          code: "unused-css-module-class",
+          cssModulePath: secondCssPath,
+          className: "root"
+        })
+      ])
+    );
+  });
 });

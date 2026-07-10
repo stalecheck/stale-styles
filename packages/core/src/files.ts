@@ -2,7 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { defaultIgnores } from "./config";
 
-const sourceExtensions = new Set([".js", ".jsx", ".ts", ".tsx"]);
+const sourceExtensions = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx", ".mts"]);
 
 export async function findSourceFiles(target: string, ignore: string[] = []): Promise<string[]> {
   const root = path.resolve(target);

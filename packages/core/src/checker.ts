@@ -48,6 +48,18 @@ export async function checkCssModules(options: CheckOptions = {}): Promise<Check
   const diagnostics: Diagnostic[] = [];
   const cssModules = new Map<string, CssModuleRecord>();
 
+  if (sourceFiles.length === 0) {
+    diagnostics.push({
+      code: "no-source-files",
+      severity: "error",
+      message: `No supported source files were found under ${target}. Supported extensions: .js, .jsx, .mjs, .ts, .tsx, .mts.`,
+      filePath: target,
+      line: 1,
+      column: 1
+    });
+    return createCheckResult(diagnostics, 0, 0);
+  }
+
   for (const filePath of sourceFiles) {
     await analyzeSourceFile(filePath, undefined, options, rules, cssModules, diagnostics);
   }
@@ -298,11 +310,6 @@ function analyzeUsages(
   cssModules: Map<string, CssModuleRecord>,
   diagnostics: Diagnostic[]
 ): void {
-  const moduleClassNames = collectModuleClassNames(
-    imports.map((cssImport) => cssImport.cssModulePath),
-    cssModules
-  );
-
   for (const usage of findCssModuleClassUsages(source, program, imports)) {
     if (usage.kind === "unresolved") {
       const cssModule = cssModules.get(usage.cssModulePath);
@@ -351,28 +358,47 @@ function analyzeUsages(
   }
 
   for (const rawUsage of findRawClassNameUsages(source, program)) {
-    if (
-      !moduleClassNames.has(rawUsage.className) ||
-      isIgnoredClass(rawUsage.className, options.ignoreClasses)
-    ) {
+    if (isIgnoredClass(rawUsage.className, options.ignoreClasses)) {
       continue;
     }
 
-    for (const cssImport of imports) {
-      const cssModule = cssModules.get(cssImport.cssModulePath);
+    const matchingCssModulePaths = [
+      ...new Set(imports.map((cssImport) => cssImport.cssModulePath))
+    ].filter((cssModulePath) => cssModules.get(cssModulePath)?.classes.has(rawUsage.className));
 
-      if (cssModule?.classes.has(rawUsage.className)) {
-        markClassUsed(cssModule, rawUsage.className);
-      }
+    if (matchingCssModulePaths.length === 0) {
+      continue;
     }
 
-    pushDiagnostic(diagnostics, rules, {
-      code: "raw-css-module-class",
-      message: `CSS Module class "${rawUsage.className}" is used as a raw class string.`,
-      filePath,
-      className: rawUsage.className,
-      location: rawUsage.location
-    });
+    if (matchingCssModulePaths.length === 1) {
+      const cssModulePath = matchingCssModulePaths[0];
+      const cssModule = cssModules.get(cssModulePath);
+
+      if (cssModule) {
+        markClassUsed(cssModule, rawUsage.className);
+      }
+
+      pushDiagnostic(diagnostics, rules, {
+        code: "raw-css-module-class",
+        message: `CSS Module class "${rawUsage.className}" is used as a raw class string.`,
+        filePath,
+        cssModulePath,
+        className: rawUsage.className,
+        location: rawUsage.location
+      });
+      continue;
+    }
+
+    for (const cssModulePath of matchingCssModulePaths) {
+      pushDiagnostic(diagnostics, rules, {
+        code: "raw-css-module-class",
+        message: `Raw class string "${rawUsage.className}" is ambiguous between imported CSS Modules.`,
+        filePath,
+        cssModulePath,
+        className: rawUsage.className,
+        location: rawUsage.location
+      });
+    }
   }
 }
 
@@ -386,27 +412,6 @@ function markClassUsed(cssModule: CssModuleRecord, className: string): void {
   for (const composedClassName of cssModule.composedClasses.get(className) ?? []) {
     markClassUsed(cssModule, composedClassName);
   }
-}
-
-function collectModuleClassNames(
-  cssModulePaths: string[],
-  cssModules: Map<string, CssModuleRecord>
-): Set<string> {
-  const classNames = new Set<string>();
-
-  for (const cssModulePath of cssModulePaths) {
-    const cssModule = cssModules.get(cssModulePath);
-
-    if (!cssModule) {
-      continue;
-    }
-
-    for (const className of cssModule.classes) {
-      classNames.add(className);
-    }
-  }
-
-  return classNames;
 }
 
 function pushCssModuleDiagnostics(
