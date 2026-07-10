@@ -221,6 +221,97 @@ describe("createStaticResolver", () => {
 
     expect(resolved).toEqual([["primary"]]);
   });
+
+  it("does not fall back to an outer constant when an untyped parameter shadows it", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./button.module.css";
+
+      const variant = "outer";
+
+      function Button(variant) {
+        return styles[variant];
+      }
+    `);
+
+    expect(resolved).toEqual([]);
+  });
+
+  it("does not resolve bindings with direct reassignment", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./button.module.css";
+
+      let fromAssignment = "outer";
+      fromAssignment = "missing";
+
+      var fromUpdate = "outer";
+      fromUpdate += "-missing";
+
+      styles[fromAssignment];
+      styles[fromUpdate];
+    `);
+
+    expect(resolved).toEqual([]);
+  });
+
+  it("does not resolve a binding before its declaration", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./button.module.css";
+
+      const variant = "outer";
+
+      {
+        styles[variant];
+        const variant = "inner";
+      }
+    `);
+
+    expect(resolved).toEqual([]);
+  });
+
+  it("does not fall back through unknown catch and generic bindings", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./button.module.css";
+
+      type Variant = "outer";
+      const variant = "outer";
+
+      try {
+        throw new Error("failure");
+      } catch (variant) {
+        styles[variant];
+      }
+
+      function Button<Variant>(variant: Variant) {
+        return styles[variant];
+      }
+    `);
+
+    expect(resolved).toEqual([]);
+  });
+
+  it("resolves let bindings when their identifier is never reassigned", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./button.module.css";
+
+      let variant = "primary";
+      styles[variant];
+    `);
+
+    expect(resolved).toEqual([["primary"]]);
+  });
+
+  it("ignores object property mutations when checking binding stability", () => {
+    const resolved = resolveComputedStyleProperties(`
+      import styles from "./button.module.css";
+
+      const classMap = { primary: "primary" } as const;
+      classMap.primary = "missing";
+
+      styles[classMap.primary];
+    `);
+
+    expect(resolved).toEqual([["primary"]]);
+  });
 });
 
 function resolveComputedStyleProperties(source: string): string[][] {

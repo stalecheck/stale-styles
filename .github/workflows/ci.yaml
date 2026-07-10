@@ -72,3 +72,6 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      - name: Smoke test built CLI
+        run: pnpm --filter @stale-styles/cli test:dist

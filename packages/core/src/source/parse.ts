@@ -14,7 +14,8 @@ export function parseSourceFile(filePath: string, source: string): SourceParseRe
     const result = parseSync(filePath, source, {
       lang: getParserLang(filePath),
       sourceType: "module",
-      astType: "ts"
+      astType: "ts",
+      range: true
     });
 
     if (result.errors.length > 0) {

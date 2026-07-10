@@ -5,6 +5,7 @@ packages:
   - packages/eslint-plugin
 
 catalog:
+  '@typescript-eslint/scope-manager': ^8.63.0
   lightningcss: ^1.32.0
   oxc-parser: ^0.139.0
   oxc-resolver: ^11.23.0

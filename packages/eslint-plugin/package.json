@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@oxlint/plugins": "^1.72.0",
+    "@typescript-eslint/scope-manager": "catalog:default",
     "lightningcss": "catalog:default",
     "oxc-parser": "catalog:default",
     "oxc-resolver": "catalog:default"

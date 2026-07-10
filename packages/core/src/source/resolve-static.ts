@@ -1,3 +1,5 @@
+import { analyze, type Variable } from "@typescript-eslint/scope-manager";
+import { visitorKeys } from "oxc-parser";
 import type { AstNode } from "./ast";
 import {
   getIdentifierName,
@@ -10,75 +12,115 @@ import {
 export function createStaticResolver(
   program: AstNode
 ): (expression: AstNode) => string[] | undefined {
+  const semanticVariables = createSemanticVariableMap(program);
   const constants: ScopedBinding<string[] | undefined>[] = [];
   const objectConstants: ScopedBinding<Map<string, string[]>>[] = [];
-  const typeAliases = new Map<string, string[]>();
-  const objectTypeAliases = new Map<string, Map<string, string[]>>();
+  const typeAliases = new Map<Variable, string[]>();
+  const objectTypeAliases = new Map<Variable, Map<string, string[]>>();
 
-  walkAst(program, (node, ancestors) => {
+  walkAst(program, (node) => {
     if (node.type === "TSTypeAliasDeclaration") {
-      collectTypeAlias(node, objectConstants, typeAliases, objectTypeAliases);
+      collectTypeAlias(node, objectConstants, typeAliases, objectTypeAliases, semanticVariables);
       return;
     }
 
     if (node.type === "TSInterfaceDeclaration") {
-      collectInterfaceDeclaration(node, objectConstants, typeAliases, objectTypeAliases);
+      collectInterfaceDeclaration(
+        node,
+        objectConstants,
+        typeAliases,
+        objectTypeAliases,
+        semanticVariables
+      );
       return;
     }
 
     if (node.type === "TSEnumDeclaration") {
-      collectEnumDeclaration(node, ancestors, objectConstants);
+      collectEnumDeclaration(node, objectConstants, semanticVariables);
       return;
     }
 
     if (node.type === "CallExpression") {
       collectForwardRefPropsBinding(
         node,
-        ancestors,
         constants,
         objectConstants,
         typeAliases,
-        objectTypeAliases
+        objectTypeAliases,
+        semanticVariables
       );
       return;
     }
 
     if (node.type === "VariableDeclarator") {
-      collectVariableDeclarator(node, ancestors, constants, objectConstants, typeAliases);
+      collectVariableDeclarator(node, constants, objectConstants, typeAliases, semanticVariables);
       return;
     }
 
     collectTypedBinding(
       node,
-      ancestors,
       constants,
       objectConstants,
       typeAliases,
-      objectTypeAliases
+      objectTypeAliases,
+      semanticVariables
     );
   });
 
-  return (expression: AstNode) => resolveExpression(expression, constants, objectConstants);
+  return (expression: AstNode) =>
+    resolveExpression(expression, constants, objectConstants, semanticVariables);
 }
 
 type ScopedBinding<T> = {
-  name: string;
+  variable: Variable;
   value: T;
-  declarationIndex: number;
-  scopeStart: number;
-  scopeEnd: number;
-  scopeDepth: number;
+  availableFrom: number;
 };
+
+type ScopeProgram = Parameters<typeof analyze>[0];
+type SemanticVariableMap = WeakMap<object, Variable>;
+
+function createSemanticVariableMap(program: AstNode): SemanticVariableMap {
+  if (!isScopeProgram(program)) {
+    throw new Error("Static resolver requires a ranged Program AST.");
+  }
+
+  const scopeManager = analyze(program, {
+    childVisitorKeys: visitorKeys,
+    lib: [],
+    sourceType: "module"
+  });
+  const semanticVariables: SemanticVariableMap = new WeakMap();
+
+  for (const scope of scopeManager.scopes) {
+    for (const variable of scope.variables) {
+      for (const identifier of variable.identifiers) {
+        semanticVariables.set(identifier, variable);
+      }
+
+      for (const reference of variable.references) {
+        semanticVariables.set(reference.identifier, variable);
+      }
+    }
+  }
+
+  return semanticVariables;
+}
+
+function isScopeProgram(program: AstNode): program is AstNode & ScopeProgram {
+  return program.type === "Program" && Array.isArray(program.body) && Array.isArray(program.range);
+}
 
 function collectTypeAlias(
   node: AstNode,
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>,
-  objectTypeAliases: Map<string, Map<string, string[]>>
+  typeAliases: Map<Variable, string[]>,
+  objectTypeAliases: Map<Variable, Map<string, string[]>>,
+  semanticVariables: SemanticVariableMap
 ): void {
-  const identifier = getIdentifierName(node.id);
+  const variable = getSemanticVariable(node.id, semanticVariables);
 
-  if (!identifier || !isAstNode(node.typeAnnotation)) {
+  if (!variable || !isAstNode(node.typeAnnotation)) {
     return;
   }
 
@@ -86,45 +128,54 @@ function collectTypeAlias(
     node.typeAnnotation,
     objectConstants,
     typeAliases,
-    objectTypeAliases
+    objectTypeAliases,
+    semanticVariables
   );
 
   if (resolvedObject) {
-    objectTypeAliases.set(identifier, resolvedObject);
+    objectTypeAliases.set(variable, resolvedObject);
     return;
   }
 
-  const resolved = resolveTypeAnnotation(node.typeAnnotation, objectConstants, typeAliases);
+  const resolved = resolveTypeAnnotation(
+    node.typeAnnotation,
+    objectConstants,
+    typeAliases,
+    semanticVariables
+  );
 
   if (resolved) {
-    typeAliases.set(identifier, resolved);
+    typeAliases.set(variable, resolved);
   }
 }
 
 function collectInterfaceDeclaration(
   node: AstNode,
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>,
-  objectTypeAliases: Map<string, Map<string, string[]>>
+  typeAliases: Map<Variable, string[]>,
+  objectTypeAliases: Map<Variable, Map<string, string[]>>,
+  semanticVariables: SemanticVariableMap
 ): void {
-  const identifier = getIdentifierName(node.id);
+  const variable = getSemanticVariable(node.id, semanticVariables);
   const resolved = resolveInterfaceDeclaration(
     node,
     objectConstants,
     typeAliases,
-    objectTypeAliases
+    objectTypeAliases,
+    semanticVariables
   );
 
-  if (identifier && resolved) {
-    objectTypeAliases.set(identifier, resolved);
+  if (variable && resolved) {
+    objectTypeAliases.set(variable, resolved);
   }
 }
 
 function resolveInterfaceDeclaration(
   node: AstNode,
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>,
-  objectTypeAliases: Map<string, Map<string, string[]>>
+  typeAliases: Map<Variable, string[]>,
+  objectTypeAliases: Map<Variable, Map<string, string[]>>,
+  semanticVariables: SemanticVariableMap
 ): Map<string, string[]> | undefined {
   const properties = new Map<string, string[]>();
   const heritageEntries = Array.isArray(node.extends) ? node.extends : [];
@@ -134,8 +185,8 @@ function resolveInterfaceDeclaration(
       continue;
     }
 
-    const baseName = getIdentifierName(heritage.expression);
-    const baseProperties = baseName ? objectTypeAliases.get(baseName) : undefined;
+    const baseVariable = getSemanticVariable(heritage.expression, semanticVariables);
+    const baseProperties = baseVariable ? objectTypeAliases.get(baseVariable) : undefined;
 
     if (baseProperties) {
       mergeObjectTypeProperties(properties, baseProperties);
@@ -143,7 +194,7 @@ function resolveInterfaceDeclaration(
   }
 
   const ownProperties = isAstNode(node.body)
-    ? resolveObjectTypeMembers(node.body.body, objectConstants, typeAliases)
+    ? resolveObjectTypeMembers(node.body.body, objectConstants, typeAliases, semanticVariables)
     : undefined;
 
   if (ownProperties) {
@@ -155,14 +206,14 @@ function resolveInterfaceDeclaration(
 
 function collectEnumDeclaration(
   node: AstNode,
-  ancestors: AstNode[],
-  objectConstants: ScopedBinding<Map<string, string[]>>[]
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  semanticVariables: SemanticVariableMap
 ): void {
-  const identifier = getIdentifierName(node.id);
+  const variable = getSemanticVariable(node.id, semanticVariables);
   const members = isAstNode(node.body) && Array.isArray(node.body.members) ? node.body.members : [];
   const enumValues = new Map<string, string[]>();
 
-  if (!identifier) {
+  if (!variable) {
     return;
   }
 
@@ -182,54 +233,64 @@ function collectEnumDeclaration(
   }
 
   if (enumValues.size > 0) {
-    objectConstants.push(createScopedBinding(identifier, enumValues, node, ancestors));
+    pushScopedBinding(objectConstants, variable, enumValues, node);
   }
 }
 
 function collectVariableDeclarator(
   node: AstNode,
-  ancestors: AstNode[],
   constants: ScopedBinding<string[] | undefined>[],
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>
+  typeAliases: Map<Variable, string[]>,
+  semanticVariables: SemanticVariableMap
 ): void {
-  const identifier = getIdentifierName(node.id);
+  const variable = getSemanticVariable(node.id, semanticVariables);
 
-  if (!identifier || !isAstNode(node.init)) {
+  if (!variable || !isStableVariable(variable) || !isAstNode(node.init)) {
     return;
   }
 
   const typedValues =
     isAstNode(node.id) && isAstNode(node.id.typeAnnotation)
-      ? resolveTypeAnnotation(node.id.typeAnnotation, objectConstants, typeAliases)
+      ? resolveTypeAnnotation(
+          node.id.typeAnnotation,
+          objectConstants,
+          typeAliases,
+          semanticVariables
+        )
       : undefined;
 
   if (typedValues) {
-    constants.push(createScopedBinding(identifier, typedValues, node, ancestors));
+    pushScopedBinding(constants, variable, typedValues, node);
     return;
   }
 
-  const objectResolved = resolveObjectExpression(node.init, constants, objectConstants);
+  const objectResolved = resolveObjectExpression(
+    node.init,
+    constants,
+    objectConstants,
+    semanticVariables
+  );
 
   if (objectResolved) {
-    objectConstants.push(createScopedBinding(identifier, objectResolved, node, ancestors));
+    pushScopedBinding(objectConstants, variable, objectResolved, node);
     return;
   }
 
-  const resolved = resolveExpression(node.init, constants, objectConstants);
+  const resolved = resolveExpression(node.init, constants, objectConstants, semanticVariables);
 
   if (resolved) {
-    constants.push(createScopedBinding(identifier, resolved, node, ancestors));
+    pushScopedBinding(constants, variable, resolved, node);
   }
 }
 
 function collectForwardRefPropsBinding(
   node: AstNode,
-  ancestors: AstNode[],
   constants: ScopedBinding<string[] | undefined>[],
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>,
-  objectTypeAliases: Map<string, Map<string, string[]>>
+  typeAliases: Map<Variable, string[]>,
+  objectTypeAliases: Map<Variable, Map<string, string[]>>,
+  semanticVariables: SemanticVariableMap
 ): void {
   if (!isForwardRefCall(node)) {
     return;
@@ -251,28 +312,33 @@ function collectForwardRefPropsBinding(
   collectObjectPatternTypedBindings(
     propsParam,
     propsType,
-    [...ancestors, node, renderFunction],
     constants,
     objectConstants,
     typeAliases,
-    objectTypeAliases
+    objectTypeAliases,
+    semanticVariables
   );
 }
 
 function collectTypedBinding(
   node: AstNode,
-  ancestors: AstNode[],
   constants: ScopedBinding<string[] | undefined>[],
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>,
-  objectTypeAliases: Map<string, Map<string, string[]>>
+  typeAliases: Map<Variable, string[]>,
+  objectTypeAliases: Map<Variable, Map<string, string[]>>,
+  semanticVariables: SemanticVariableMap
 ): void {
-  const identifier = getIdentifierName(node);
+  const variable = getSemanticVariable(node, semanticVariables);
 
-  if (identifier && isAstNode(node.typeAnnotation)) {
-    const resolved = resolveTypeAnnotation(node.typeAnnotation, objectConstants, typeAliases);
+  if (variable && isAstNode(node.typeAnnotation)) {
+    const resolved = resolveTypeAnnotation(
+      node.typeAnnotation,
+      objectConstants,
+      typeAliases,
+      semanticVariables
+    );
 
-    constants.push(createScopedBinding(identifier, resolved, node, ancestors));
+    pushScopedBinding(constants, variable, resolved, node);
   }
 
   if (node.type !== "ObjectPattern" || !isAstNode(node.typeAnnotation)) {
@@ -282,50 +348,58 @@ function collectTypedBinding(
   collectObjectPatternTypedBindings(
     node,
     node.typeAnnotation,
-    ancestors,
     constants,
     objectConstants,
     typeAliases,
-    objectTypeAliases
+    objectTypeAliases,
+    semanticVariables
   );
 }
 
 function collectObjectPatternTypedBindings(
   node: AstNode,
   annotation: AstNode,
-  ancestors: AstNode[],
   constants: ScopedBinding<string[] | undefined>[],
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>,
-  objectTypeAliases: Map<string, Map<string, string[]>>
+  typeAliases: Map<Variable, string[]>,
+  objectTypeAliases: Map<Variable, Map<string, string[]>>,
+  semanticVariables: SemanticVariableMap
 ): void {
   const objectTypeProperties = getObjectTypeProperties(
     annotation,
     objectConstants,
     typeAliases,
-    objectTypeAliases
+    objectTypeAliases,
+    semanticVariables
   );
   if (!objectTypeProperties) {
-    for (const bindingName of collectObjectPatternBindingNames(node)) {
-      constants.push(createScopedBinding(bindingName, undefined, node, ancestors));
+    for (const binding of collectObjectPatternBindings(node)) {
+      const variable = getSemanticVariable(binding, semanticVariables);
+
+      if (variable) {
+        pushScopedBinding(constants, variable, undefined, binding);
+      }
     }
     return;
   }
 
-  const collectedBindingNames = new Set<string>();
+  const collectedVariables = new Set<Variable>();
 
   for (const [propertyName, propertyValues] of objectTypeProperties) {
-    const bindingName = findObjectPatternBindingName(node, propertyName);
+    const binding = findObjectPatternBinding(node, propertyName);
+    const variable = getSemanticVariable(binding, semanticVariables);
 
-    if (bindingName) {
-      collectedBindingNames.add(bindingName);
-      constants.push(createScopedBinding(bindingName, propertyValues, node, ancestors));
+    if (variable && binding) {
+      collectedVariables.add(variable);
+      pushScopedBinding(constants, variable, propertyValues, binding);
     }
   }
 
-  for (const bindingName of collectObjectPatternBindingNames(node)) {
-    if (!collectedBindingNames.has(bindingName)) {
-      constants.push(createScopedBinding(bindingName, undefined, node, ancestors));
+  for (const binding of collectObjectPatternBindings(node)) {
+    const variable = getSemanticVariable(binding, semanticVariables);
+
+    if (variable && !collectedVariables.has(variable)) {
+      pushScopedBinding(constants, variable, undefined, binding);
     }
   }
 }
@@ -363,7 +437,8 @@ function isFunctionNode(node: AstNode): boolean {
 function resolveExpression(
   expression: AstNode,
   constants: ScopedBinding<string[] | undefined>[],
-  objectConstants: ScopedBinding<Map<string, string[]>>[]
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  semanticVariables: SemanticVariableMap
 ): string[] | undefined {
   const literal = getStaticPrimitiveValue(expression);
 
@@ -372,13 +447,13 @@ function resolveExpression(
   }
 
   if (expression.type === "TemplateLiteral") {
-    return resolveTemplateLiteral(expression, constants, objectConstants);
+    return resolveTemplateLiteral(expression, constants, objectConstants, semanticVariables);
   }
 
   const identifier = getIdentifierName(expression);
 
   if (identifier) {
-    return findVisibleBinding(constants, identifier, expression)?.value;
+    return findVisibleBinding(constants, expression, semanticVariables)?.value;
   }
 
   if (expression.type === "MemberExpression") {
@@ -386,16 +461,20 @@ function resolveExpression(
     const propertyName = getStaticPropertyName(expression.property);
 
     if (objectName && propertyName) {
-      return findVisibleBinding(objectConstants, objectName, expression)?.value.get(propertyName);
+      return isAstNode(expression.object)
+        ? findVisibleBinding(objectConstants, expression.object, semanticVariables)?.value.get(
+            propertyName
+          )
+        : undefined;
     }
   }
 
   if (expression.type === "ConditionalExpression") {
     const consequent = isAstNode(expression.consequent)
-      ? resolveExpression(expression.consequent, constants, objectConstants)
+      ? resolveExpression(expression.consequent, constants, objectConstants, semanticVariables)
       : undefined;
     const alternate = isAstNode(expression.alternate)
-      ? resolveExpression(expression.alternate, constants, objectConstants)
+      ? resolveExpression(expression.alternate, constants, objectConstants, semanticVariables)
       : undefined;
 
     if (consequent && alternate) {
@@ -411,7 +490,7 @@ function resolveExpression(
       expression.type === "TSTypeAssertion") &&
     isAstNode(expression.expression)
   ) {
-    return resolveExpression(expression.expression, constants, objectConstants);
+    return resolveExpression(expression.expression, constants, objectConstants, semanticVariables);
   }
 
   return undefined;
@@ -420,8 +499,9 @@ function resolveExpression(
 function getObjectTypeProperties(
   annotation: AstNode,
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>,
-  objectTypeAliases: Map<string, Map<string, string[]>>
+  typeAliases: Map<Variable, string[]>,
+  objectTypeAliases: Map<Variable, Map<string, string[]>>,
+  semanticVariables: SemanticVariableMap
 ): Map<string, string[]> | undefined {
   const typeNode = getTypeAnnotationBody(annotation);
 
@@ -430,16 +510,28 @@ function getObjectTypeProperties(
   }
 
   if (typeNode.type === "TSTypeLiteral") {
-    return resolveObjectTypeAnnotation(typeNode, objectConstants, typeAliases, objectTypeAliases);
+    return resolveObjectTypeAnnotation(
+      typeNode,
+      objectConstants,
+      typeAliases,
+      objectTypeAliases,
+      semanticVariables
+    );
   }
 
   if (typeNode.type === "TSIntersectionType") {
-    return resolveObjectTypeAnnotation(typeNode, objectConstants, typeAliases, objectTypeAliases);
+    return resolveObjectTypeAnnotation(
+      typeNode,
+      objectConstants,
+      typeAliases,
+      objectTypeAliases,
+      semanticVariables
+    );
   }
 
   if (typeNode.type === "TSTypeReference") {
-    const typeName = getIdentifierName(typeNode.typeName);
-    return typeName ? objectTypeAliases.get(typeName) : undefined;
+    const typeVariable = getSemanticVariable(typeNode.typeName, semanticVariables);
+    return typeVariable ? objectTypeAliases.get(typeVariable) : undefined;
   }
 
   return undefined;
@@ -448,8 +540,9 @@ function getObjectTypeProperties(
 function resolveObjectTypeAnnotation(
   annotation: AstNode,
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>,
-  objectTypeAliases: Map<string, Map<string, string[]>>
+  typeAliases: Map<Variable, string[]>,
+  objectTypeAliases: Map<Variable, Map<string, string[]>>,
+  semanticVariables: SemanticVariableMap
 ): Map<string, string[]> | undefined {
   const typeNode = getTypeAnnotationBody(annotation);
 
@@ -458,12 +551,17 @@ function resolveObjectTypeAnnotation(
   }
 
   if (typeNode.type === "TSTypeLiteral") {
-    return resolveObjectTypeMembers(typeNode.members, objectConstants, typeAliases);
+    return resolveObjectTypeMembers(
+      typeNode.members,
+      objectConstants,
+      typeAliases,
+      semanticVariables
+    );
   }
 
   if (typeNode.type === "TSTypeReference") {
-    const typeName = getIdentifierName(typeNode.typeName);
-    return typeName ? objectTypeAliases.get(typeName) : undefined;
+    const typeVariable = getSemanticVariable(typeNode.typeName, semanticVariables);
+    return typeVariable ? objectTypeAliases.get(typeVariable) : undefined;
   }
 
   if (typeNode.type !== "TSIntersectionType" || !Array.isArray(typeNode.types)) {
@@ -481,7 +579,8 @@ function resolveObjectTypeAnnotation(
       childType,
       objectConstants,
       typeAliases,
-      objectTypeAliases
+      objectTypeAliases,
+      semanticVariables
     );
 
     if (!childProperties) {
@@ -506,7 +605,8 @@ function mergeObjectTypeProperties(
 function resolveObjectTypeMembers(
   members: unknown,
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>
+  typeAliases: Map<Variable, string[]>,
+  semanticVariables: SemanticVariableMap
 ): Map<string, string[]> | undefined {
   if (!Array.isArray(members)) {
     return undefined;
@@ -521,7 +621,12 @@ function resolveObjectTypeMembers(
 
     const propertyName = getStaticPropertyName(member.key);
     const propertyValues = isAstNode(member.typeAnnotation)
-      ? resolveTypeAnnotation(member.typeAnnotation, objectConstants, typeAliases)
+      ? resolveTypeAnnotation(
+          member.typeAnnotation,
+          objectConstants,
+          typeAliases,
+          semanticVariables
+        )
       : undefined;
 
     if (!propertyName || !propertyValues) {
@@ -537,7 +642,8 @@ function resolveObjectTypeMembers(
 function resolveObjectExpression(
   expression: AstNode,
   constants: ScopedBinding<string[] | undefined>[],
-  objectConstants: ScopedBinding<Map<string, string[]>>[]
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  semanticVariables: SemanticVariableMap
 ): Map<string, string[]> | undefined {
   const objectExpression =
     expression.type === "TSAsExpression" && isAstNode(expression.expression)
@@ -558,7 +664,7 @@ function resolveObjectExpression(
 
     const key = getStaticPropertyName(property.key);
     const value = isAstNode(property.value)
-      ? resolveExpression(property.value, constants, objectConstants)
+      ? resolveExpression(property.value, constants, objectConstants, semanticVariables)
       : undefined;
 
     if (!key || !value) {
@@ -574,7 +680,8 @@ function resolveObjectExpression(
 function resolveTemplateLiteral(
   expression: AstNode,
   constants: ScopedBinding<string[] | undefined>[],
-  objectConstants: ScopedBinding<Map<string, string[]>>[]
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  semanticVariables: SemanticVariableMap
 ): string[] | undefined {
   const quasis = Array.isArray(expression.quasis) ? expression.quasis : [];
   const expressions = Array.isArray(expression.expressions) ? expression.expressions : [];
@@ -590,7 +697,12 @@ function resolveTemplateLiteral(
       return undefined;
     }
 
-    const resolved = resolveExpression(childExpression, constants, objectConstants);
+    const resolved = resolveExpression(
+      childExpression,
+      constants,
+      objectConstants,
+      semanticVariables
+    );
 
     if (!resolved) {
       return undefined;
@@ -640,7 +752,8 @@ function getTemplateQuasiValue(quasi: unknown): string | undefined {
 function resolveTypeAnnotation(
   annotation: AstNode,
   objectConstants: ScopedBinding<Map<string, string[]>>[],
-  typeAliases: Map<string, string[]>
+  typeAliases: Map<Variable, string[]>,
+  semanticVariables: SemanticVariableMap
 ): string[] | undefined {
   const typeNode = getTypeAnnotationBody(annotation);
 
@@ -661,7 +774,12 @@ function resolveTypeAnnotation(
         return undefined;
       }
 
-      const childValues = resolveTypeAnnotation(childType, objectConstants, typeAliases);
+      const childValues = resolveTypeAnnotation(
+        childType,
+        objectConstants,
+        typeAliases,
+        semanticVariables
+      );
 
       if (!childValues) {
         return undefined;
@@ -675,22 +793,29 @@ function resolveTypeAnnotation(
 
   if (typeNode.type === "TSParenthesizedType") {
     return isAstNode(typeNode.typeAnnotation)
-      ? resolveTypeAnnotation(typeNode.typeAnnotation, objectConstants, typeAliases)
+      ? resolveTypeAnnotation(
+          typeNode.typeAnnotation,
+          objectConstants,
+          typeAliases,
+          semanticVariables
+        )
       : undefined;
   }
 
   if (typeNode.type === "TSTypeReference") {
-    const typeName = getIdentifierName(typeNode.typeName);
-    return typeName
-      ? (typeAliases.get(typeName) ??
+    const typeVariable = getSemanticVariable(typeNode.typeName, semanticVariables);
+    return typeVariable
+      ? (typeAliases.get(typeVariable) ??
           resolveObjectConstantValues(
-            findVisibleBinding(objectConstants, typeName, typeNode)?.value
+            isAstNode(typeNode.typeName)
+              ? findVisibleBinding(objectConstants, typeNode.typeName, semanticVariables)?.value
+              : undefined
           ))
       : undefined;
   }
 
   if (typeNode.type === "TSIndexedAccessType") {
-    return resolveIndexedAccessType(typeNode, objectConstants);
+    return resolveIndexedAccessType(typeNode, objectConstants, semanticVariables);
   }
 
   return undefined;
@@ -698,15 +823,21 @@ function resolveTypeAnnotation(
 
 function resolveIndexedAccessType(
   typeNode: AstNode,
-  objectConstants: ScopedBinding<Map<string, string[]>>[]
+  objectConstants: ScopedBinding<Map<string, string[]>>[],
+  semanticVariables: SemanticVariableMap
 ): string[] | undefined {
-  const objectName = getTypeQueryName(typeNode.objectType);
+  const objectIdentifier = getTypeQueryIdentifier(typeNode.objectType);
+  const objectName = getIdentifierName(objectIdentifier);
 
-  if (!objectName || !isKeyofTypeQuery(typeNode.indexType, objectName)) {
+  if (!objectIdentifier || !objectName || !isKeyofTypeQuery(typeNode.indexType, objectName)) {
     return undefined;
   }
 
-  const objectValues = findVisibleBinding(objectConstants, objectName, typeNode)?.value;
+  const objectValues = findVisibleBinding(
+    objectConstants,
+    objectIdentifier,
+    semanticVariables
+  )?.value;
 
   return resolveObjectConstantValues(objectValues);
 }
@@ -727,15 +858,19 @@ function isKeyofTypeQuery(node: unknown, objectName: string): boolean {
 }
 
 function getTypeQueryName(node: unknown): string | undefined {
+  return getIdentifierName(getTypeQueryIdentifier(node));
+}
+
+function getTypeQueryIdentifier(node: unknown): AstNode | undefined {
   if (!isAstNode(node)) {
     return undefined;
   }
 
   if (node.type === "TSParenthesizedType") {
-    return getTypeQueryName(node.typeAnnotation);
+    return getTypeQueryIdentifier(node.typeAnnotation);
   }
 
-  return node.type === "TSTypeQuery" ? getIdentifierName(node.exprName) : undefined;
+  return node.type === "TSTypeQuery" && isAstNode(node.exprName) ? node.exprName : undefined;
 }
 
 function getTypeAnnotationBody(annotation: AstNode): AstNode | undefined {
@@ -762,72 +897,53 @@ function getStaticPrimitiveValue(node: unknown): string | undefined {
   return undefined;
 }
 
-function createScopedBinding<T>(
-  name: string,
+function pushScopedBinding<T>(
+  bindings: ScopedBinding<T>[],
+  variable: Variable,
   value: T,
-  node: AstNode,
-  ancestors: AstNode[]
-): ScopedBinding<T> {
-  const scope = getNearestValueScope(node, ancestors);
-
-  return {
-    name,
-    value,
-    declarationIndex: node.start ?? 0,
-    scopeStart: scope.start ?? 0,
-    scopeEnd: scope.end ?? Number.POSITIVE_INFINITY,
-    scopeDepth: scope.depth
-  };
-}
-
-function getNearestValueScope(node: AstNode, ancestors: AstNode[]): AstNode & { depth: number } {
-  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
-    const ancestor = ancestors[index];
-
-    if (isValueScope(ancestor)) {
-      return { ...ancestor, depth: index };
-    }
+  node: AstNode
+): void {
+  if (!isStableVariable(variable)) {
+    return;
   }
 
-  return { ...node, start: 0, end: Number.POSITIVE_INFINITY, depth: 0 };
+  bindings.push({
+    variable,
+    value,
+    availableFrom: node.end ?? node.start ?? 0
+  });
 }
 
-function isValueScope(node: AstNode): boolean {
-  return (
-    node.type === "Program" ||
-    node.type === "BlockStatement" ||
-    node.type === "FunctionDeclaration" ||
-    node.type === "FunctionExpression" ||
-    node.type === "ArrowFunctionExpression"
-  );
+function isStableVariable(variable: Variable): boolean {
+  const writes = variable.references.filter((reference) => reference.isWrite());
+  return writes.length <= 1 && writes.every((reference) => reference.init === true);
+}
+
+function getSemanticVariable(
+  node: unknown,
+  semanticVariables: SemanticVariableMap
+): Variable | undefined {
+  return isAstNode(node) ? semanticVariables.get(node) : undefined;
 }
 
 function findVisibleBinding<T>(
   bindings: ScopedBinding<T>[],
-  name: string,
-  expression: AstNode
+  expression: AstNode,
+  semanticVariables: SemanticVariableMap
 ): ScopedBinding<T> | undefined {
+  const variable = getSemanticVariable(expression, semanticVariables);
   const index = expression.start ?? 0;
 
+  if (!variable || !isStableVariable(variable)) {
+    return undefined;
+  }
+
   return bindings
-    .filter((binding) => {
-      return (
-        binding.name === name &&
-        binding.declarationIndex <= index &&
-        binding.scopeStart <= index &&
-        index <= binding.scopeEnd
-      );
-    })
-    .sort((left, right) => {
-      return (
-        right.scopeDepth - left.scopeDepth ||
-        right.scopeStart - left.scopeStart ||
-        right.declarationIndex - left.declarationIndex
-      );
-    })[0];
+    .filter((binding) => binding.variable === variable && binding.availableFrom <= index)
+    .sort((left, right) => right.availableFrom - left.availableFrom)[0];
 }
 
-function findObjectPatternBindingName(pattern: AstNode, propertyName: string): string | undefined {
+function findObjectPatternBinding(pattern: AstNode, propertyName: string): AstNode | undefined {
   const properties = Array.isArray(pattern.properties) ? pattern.properties : [];
 
   for (const property of properties) {
@@ -839,13 +955,13 @@ function findObjectPatternBindingName(pattern: AstNode, propertyName: string): s
       continue;
     }
 
-    return getBindingName(property.value);
+    return getBinding(property.value);
   }
 
   return undefined;
 }
 
-function collectObjectPatternBindingNames(pattern: AstNode): string[] {
+function collectObjectPatternBindings(pattern: AstNode): AstNode[] {
   const properties = Array.isArray(pattern.properties) ? pattern.properties : [];
 
   return properties.flatMap((property) => {
@@ -854,22 +970,20 @@ function collectObjectPatternBindingNames(pattern: AstNode): string[] {
     }
 
     if (property.type === "RestElement") {
-      return collectBindingNames(property.argument);
+      return collectBindings(property.argument);
     }
 
     if (property.type === "Property") {
-      return collectBindingNames(property.value);
+      return collectBindings(property.value);
     }
 
     return [];
   });
 }
 
-function collectBindingNames(node: unknown): string[] {
-  const identifier = getIdentifierName(node);
-
-  if (identifier) {
-    return [identifier];
+function collectBindings(node: unknown): AstNode[] {
+  if (isAstNode(node) && getIdentifierName(node)) {
+    return [node];
   }
 
   if (!isAstNode(node)) {
@@ -877,35 +991,33 @@ function collectBindingNames(node: unknown): string[] {
   }
 
   if (node.type === "AssignmentPattern") {
-    return collectBindingNames(node.left);
+    return collectBindings(node.left);
   }
 
   if (node.type === "RestElement") {
-    return collectBindingNames(node.argument);
+    return collectBindings(node.argument);
   }
 
   if (node.type === "ObjectPattern") {
-    return collectObjectPatternBindingNames(node);
+    return collectObjectPatternBindings(node);
   }
 
   if (node.type === "ArrayPattern") {
     const elements = Array.isArray(node.elements) ? node.elements : [];
 
-    return elements.flatMap((element) => collectBindingNames(element));
+    return elements.flatMap((element) => collectBindings(element));
   }
 
   return [];
 }
 
-function getBindingName(node: unknown): string | undefined {
-  const identifier = getIdentifierName(node);
-
-  if (identifier) {
-    return identifier;
+function getBinding(node: unknown): AstNode | undefined {
+  if (isAstNode(node) && getIdentifierName(node)) {
+    return node;
   }
 
   if (isAstNode(node) && node.type === "AssignmentPattern") {
-    return getBindingName(node.left);
+    return getBinding(node.left);
   }
 
   return undefined;

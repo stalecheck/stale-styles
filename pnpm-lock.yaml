@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    '@typescript-eslint/scope-manager':
+      specifier: ^8.63.0
+      version: 8.63.0
     lightningcss:
       specifier: ^1.32.0
       version: 1.32.0
@@ -62,6 +65,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@typescript-eslint/scope-manager':
+        specifier: catalog:default
+        version: 8.63.0
       lightningcss:
         specifier: catalog:default
         version: 1.32.0
@@ -74,6 +80,9 @@ importers:
 
   packages/css-modules-app:
     dependencies:
+      '@typescript-eslint/scope-manager':
+        specifier: catalog:default
+        version: 8.63.0
       lightningcss:
         specifier: catalog:default
         version: 1.32.0
@@ -93,6 +102,9 @@ importers:
       '@oxlint/plugins':
         specifier: ^1.72.0
         version: 1.72.0
+      '@typescript-eslint/scope-manager':
+        specifier: catalog:default
+        version: 8.63.0
       lightningcss:
         specifier: catalog:default
         version: 1.32.0
@@ -1160,6 +1172,18 @@ packages:
 
   '@types/normalize-package-data@2.4.4':
     resolution: {integrity: sha512-37i+OaWTh9qeK4LSHPsyRC7NahnGotNuZvjLSgcPzblpHB3rrCJxAOgI5gCdKm7coonsaX1Of0ILiTcnZjbfxA==}
+
+  '@typescript-eslint/scope-manager@8.63.0':
+    resolution: {integrity: sha512-uUyfMWCnDSN8bCpcrY8nGP2BLkQ9Xn0GsipcONcpIDWhwhO4ZSyHvyS14U3X75mzxWxL3I2UZIrenTzdzcJO8A==}
+    engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@typescript-eslint/types@8.63.0':
+    resolution: {integrity: sha512-xyLtl9DUBBFrcJS4x2pIqGLH68/tC2uOa4Z7pUteW09D3bXnnXUom4dyPikzWgB7llmIc1zoeI3aoUdC4rPK/Q==}
+    engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@typescript-eslint/visitor-keys@8.63.0':
+    resolution: {integrity: sha512-UexrHGnGTpbuQHct2ExOc2ZcFbGUS9FOesCxxqdBGcpI1BxYu/LZ6U8Aq6/72XtF/qRBk9nhuGHFJIXXMhPMdw==}
+    engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
   '@vitest/coverage-v8@4.1.10':
     resolution: {integrity: sha512-IM49HmthevbgAO4anp1hwtoT9wYe59w0LR00gr+eagHE+ZJ5lK4sLPeO0ubgoJcwLk6dehU3R24N+FbEEKDc8g==}
@@ -3192,6 +3216,18 @@ snapshots:
       undici-types: 7.16.0
 
   '@types/normalize-package-data@2.4.4': {}
+
+  '@typescript-eslint/scope-manager@8.63.0':
+    dependencies:
+      '@typescript-eslint/types': 8.63.0
+      '@typescript-eslint/visitor-keys': 8.63.0
+
+  '@typescript-eslint/types@8.63.0': {}
+
+  '@typescript-eslint/visitor-keys@8.63.0':
+    dependencies:
+      '@typescript-eslint/types': 8.63.0
+      eslint-visitor-keys: 5.0.1
 
   '@vitest/coverage-v8@4.1.10(vitest@4.1.10)':
     dependencies:

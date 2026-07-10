@@ -10,6 +10,7 @@ export default defineConfig({
   clean: true,
   platform: "node",
   target: "es2022",
+  external: ["@stale-styles/css-modules"],
   skipNodeModulesBundle: true,
-  tsconfig: "tsconfig.json"
+  tsconfig: "tsconfig.build.json"
 });

@@ -27,6 +27,7 @@
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "test": "vitest run --root ../.. --project cli",
+    "test:dist": "node ./dist/cli.js --help",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

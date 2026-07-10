@@ -24,6 +24,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@typescript-eslint/scope-manager": "catalog:default",
     "lightningcss": "catalog:default",
     "oxc-parser": "catalog:default",
     "oxc-resolver": "catalog:default"
